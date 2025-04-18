@@ -3,6 +3,8 @@ import streamlit as st
 import random
 import time
 import uuid
+import json
+from datetime import datetime
 from dotenv import load_dotenv
 from openai import OpenAI
 from backend.backend_utils import search_papers_by_keywords
@@ -13,6 +15,95 @@ from backend.reaction_utils import generate_reaction, get_reaction_gif
 # Load environment variables
 load_dotenv()
 DBPIA_API_KEY = os.getenv("DBPIA_API_KEY")
+
+# Constants
+PAPERS_STORAGE_FILE = "generated_papers.json"
+KEYWORDS_STORAGE_FILE = "search_keywords.json"
+
+# Initialize storage
+def init_storage():
+    if not os.path.exists(PAPERS_STORAGE_FILE):
+        with open(PAPERS_STORAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=False)
+    
+    if not os.path.exists(KEYWORDS_STORAGE_FILE):
+        with open(KEYWORDS_STORAGE_FILE, "w", encoding="utf-8") as f:
+            json.dump([], f, ensure_ascii=False)
+
+def save_generated_paper(paper_data, search_query):
+    try:
+        with open(PAPERS_STORAGE_FILE, "r", encoding="utf-8") as f:
+            papers = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        papers = []
+    
+    # Add metadata to paper
+    paper_data["generated_at"] = datetime.now().isoformat()
+    paper_data["search_query"] = search_query
+    paper_data["paper_id"] = str(uuid.uuid4())
+    
+    # Add to papers list
+    papers.append(paper_data)
+    
+    # Save back to file
+    with open(PAPERS_STORAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump(papers, f, ensure_ascii=False, indent=2)
+    
+    return paper_data["paper_id"]
+
+def load_generated_papers():
+    try:
+        with open(PAPERS_STORAGE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+def save_search_keyword(keyword):
+    try:
+        with open(KEYWORDS_STORAGE_FILE, "r", encoding="utf-8") as f:
+            keywords = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        keywords = []
+    
+    # Add new keyword with timestamp
+    keyword_data = {
+        "keyword": keyword,
+        "searched_at": datetime.now().isoformat()
+    }
+    
+    # Remove duplicate if exists
+    keywords = [k for k in keywords if k["keyword"] != keyword]
+    
+    # Add new keyword at the beginning
+    keywords.insert(0, keyword_data)
+    
+    # Keep only last 50 keywords
+    keywords = keywords[:50]
+    
+    # Save back to file
+    with open(KEYWORDS_STORAGE_FILE, "w", encoding="utf-8") as f:
+        json.dump(keywords, f, ensure_ascii=False, indent=2)
+
+def load_search_keywords():
+    try:
+        with open(KEYWORDS_STORAGE_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+# Initialize storage on startup
+init_storage()
+
+# Session state for search query
+if 'search_query' not in st.session_state:
+    st.session_state.search_query = ""
+
+def update_search_query(keyword):
+    current_query = st.session_state.search_query.strip()
+    if current_query:
+        st.session_state.search_query = f"{current_query}, {keyword}"
+    else:
+        st.session_state.search_query = keyword
 
 # Page configuration
 st.set_page_config(
@@ -285,8 +376,12 @@ with col4:
 
 st.markdown('</div></div>', unsafe_allow_html=True)
 
+# Save keyword when search button is clicked
+if search_button and search_query:
+    save_search_keyword(search_query)
+
 # Category Tabs
-tabs = st.tabs(["AI 검색", "오늘의 괴논문", "최근 검색 키워드"])
+tabs = st.tabs(["AI 검색", "📝 내 논문...인 듯?", "최근 검색 키워드"])
 
 with tabs[0]:
     # Paper Generation
@@ -455,6 +550,19 @@ with tabs[0]:
                 f'<img src="{gif_url}" style="max-width: 300px; border-radius: 8px; margin: 0 auto; display: block;" alt="Reaction GIF">' if gif_url else ''
             ), unsafe_allow_html=True)
 
+            # Save generated paper after generation
+            paper_data = {
+                "title": fake_paper["title"],
+                "abstract": fake_paper["abstract"],
+                "introduction": fake_paper["introduction"],
+                "background": fake_paper["background"],
+                "method": fake_paper["method"],
+                "results": fake_paper["results"],
+                "conclusion": fake_paper["conclusion"],
+                "references": fake_paper["references"]
+            }
+            save_generated_paper(paper_data, search_query)
+
             # 논문 다운로드 버튼
             filename = f"generated_paper_{search_query[:30]}.txt"
             with open(filename, "w", encoding="utf-8") as f:
@@ -472,7 +580,8 @@ with tabs[0]:
                     label="📥 논문 다운로드",
                     data=f.read(),
                     file_name=filename,
-                    mime="text/plain"
+                    mime="text/plain",
+                    key=f"download_new_{str(uuid.uuid4())}"
                 )
         else:
             # 실제 논문 검색
@@ -542,7 +651,125 @@ with tabs[0]:
                     st.error("❌ 관련 논문을 찾지 못했습니다.")
 
 with tabs[1]:
-    st.markdown("오늘의 특선 괴논문이 이곳에 표시됩니다.")
+    st.markdown("## 📚 내가 지금까지 생성한 괴논문 모음")
+    
+    # Load all generated papers
+    generated_papers = load_generated_papers()
+    
+    if not generated_papers:
+        st.info("아직 생성된 논문이 없습니다. AI 검색 탭에서 논문을 생성해보세요!")
+    else:
+        # Sort papers by generation date (newest first)
+        generated_papers.sort(key=lambda x: x["generated_at"], reverse=True)
+        
+        for paper in generated_papers:
+            with st.expander(f"📄 {paper['title']} ({datetime.fromisoformat(paper['generated_at']).strftime('%Y-%m-%d %H:%M')})"):
+                st.markdown(f"**검색어:** {paper['search_query']}")
+                
+                # Paper content tabs
+                paper_tabs = st.tabs(["초록", "본문", "AI 리액션"])
+                
+                with paper_tabs[0]:
+                    st.markdown(paper["abstract"])
+                
+                with paper_tabs[1]:
+                    st.markdown("### 1. 서론")
+                    st.markdown(paper["introduction"])
+                    st.markdown("### 2. 이론적 배경")
+                    st.markdown(paper["background"])
+                    st.markdown("### 3. 연구 방법")
+                    st.markdown(paper["method"])
+                    st.markdown("### 4. 연구 결과")
+                    st.markdown(paper["results"])
+                    st.markdown("### 5. 결론")
+                    st.markdown(paper["conclusion"])
+                    st.markdown("### 참고문헌")
+                    references = paper["references"].split('\n')
+                    for ref in references:
+                        if ref.strip():
+                            st.markdown(f"- {ref}")
+                
+                with paper_tabs[2]:
+                    # Generate real-time reaction
+                    reaction = generate_reaction(paper["title"], paper["abstract"])
+                    gif_url = get_reaction_gif(reaction)
+                    
+                    st.markdown(f"### 🤖 AI의 리액션")
+                    st.markdown(reaction)
+                    if gif_url:
+                        st.image(gif_url, width=300)
+                
+                # Download button
+                paper_content = f"""제목: {paper['title']}\n\n
+[초록]\n{paper['abstract']}\n\n
+[1. 서론]\n{paper['introduction']}\n\n
+[2. 이론적 배경]\n{paper['background']}\n\n
+[3. 연구 방법]\n{paper['method']}\n\n
+[4. 연구 결과]\n{paper['results']}\n\n
+[5. 결론]\n{paper['conclusion']}\n\n
+[참고문헌]\n{paper['references']}"""
+                
+                st.download_button(
+                    label="📥 논문 다운로드",
+                    data=paper_content,
+                    file_name=f"generated_paper_{paper['search_query'][:30]}.txt",
+                    mime="text/plain",
+                    key=f"download_stored_{paper['paper_id']}"
+                )
 
 with tabs[2]:
-    st.markdown("최근 검색된 키워드들이 이곳에 표시됩니다.")
+    st.markdown("## 🔍 최근 검색 키워드")
+    
+    # Load and display recent keywords
+    keywords = load_search_keywords()
+    
+    if not keywords:
+        st.info("아직 검색 기록이 없습니다. 검색을 시작해보세요!")
+    else:
+        st.markdown("""
+        <style>
+        .keyword-cloud {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.5rem;
+            margin: 1rem 0;
+        }
+        .keyword-item {
+            background-color: #FFD700;
+            color: black;
+            padding: 0.5rem 1rem;
+            border-radius: 20px;
+            font-size: 0.9rem;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            text-decoration: none;
+            display: inline-block;
+            margin: 0.25rem;
+        }
+        .keyword-item:hover {
+            background-color: #FFE55C;
+        }
+        .keyword-date {
+            color: #666;
+            font-size: 0.8rem;
+            margin-left: 0.5rem;
+        }
+        </style>
+        """, unsafe_allow_html=True)
+        
+        st.markdown('<div class="keyword-cloud">', unsafe_allow_html=True)
+        
+        for keyword_data in keywords:
+            keyword = keyword_data["keyword"]
+            searched_at = datetime.fromisoformat(keyword_data["searched_at"]).strftime("%Y-%m-%d %H:%M")
+            
+            # Create clickable keyword button
+            if st.button(
+                f"🔍 {keyword}",
+                key=f"keyword_{keyword_data['searched_at']}",
+                help=f"마지막 검색: {searched_at}"
+            ):
+                update_search_query(keyword)
+                st.experimental_rerun()
+        
+        st.markdown('</div>', unsafe_allow_html=True)
