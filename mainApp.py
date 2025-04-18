@@ -97,13 +97,15 @@ init_storage()
 # Session state for search query
 if 'search_query' not in st.session_state:
     st.session_state.search_query = ""
+if 'should_search' not in st.session_state:
+    st.session_state.should_search = False
 
 def update_search_query(keyword):
-    current_query = st.session_state.search_query.strip()
-    if current_query:
-        st.session_state.search_query = f"{current_query}, {keyword}"
-    else:
-        st.session_state.search_query = keyword
+    # URL 파라미터 업데이트
+    st.experimental_set_query_params(search=keyword)
+    # 검색어와 검색 상태 업데이트
+    st.session_state.search_query = keyword
+    st.session_state.should_search = True
 
 # Page configuration
 st.set_page_config(
@@ -360,32 +362,48 @@ with col2:
     )
 
 with col3:
+    # URL 파라미터에서 검색어 가져오기
+    params = dict(st.query_params)
+    initial_query = params.get("search", "")
+    
     search_query = st.text_input(
         "검색어를 입력하세요",
+        value=initial_query,
         placeholder="예시: 이어폰 줄꼬임에 대한 심리학적 분석",
         label_visibility="collapsed",
         key="search_query"
     )
 
 with col4:
-    search_button = st.button(
+    if st.button(
         "검색",
         use_container_width=True,
         key="search_button"
-    )
+    ):
+        st.session_state.should_search = True
 
 st.markdown('</div></div>', unsafe_allow_html=True)
 
-# Save keyword when search button is clicked
-if search_button and search_query:
+# 검색어가 변경되었을 때 자동으로 검색 실행
+if "prev_search_query" not in st.session_state:
+    st.session_state.prev_search_query = search_query
+
+if st.session_state.prev_search_query != search_query:
+    st.session_state.prev_search_query = search_query
+    if search_query:
+        st.session_state.should_search = True
+
+# Save keyword when search button is clicked and perform search
+if st.session_state.should_search and search_query:
     save_search_keyword(search_query)
+    st.session_state.should_search = False  # 검색 후 상태 초기화
 
 # Category Tabs
 tabs = st.tabs(["AI 검색", "📝 내 논문...인 듯?", "최근 검색 키워드"])
 
 with tabs[0]:
     # Paper Generation
-    if search_button and search_query:
+    if search_query:
         if search_type == "진짜같은 가짜 논문":
             # 새로운 검색어이거나 벡터 저장소가 없는 경우에만 논문 검색
             if st.session_state.current_query != search_query or st.session_state.vector_store is None:
@@ -707,7 +725,7 @@ with tabs[1]:
 [3. 연구 방법]\n{paper['method']}\n\n
 [4. 연구 결과]\n{paper['results']}\n\n
 [5. 결론]\n{paper['conclusion']}\n\n
-[참고문헌]\n{paper['references']}"""
+[참고문헌]\n{paper['references']}""" 
                 
                 st.download_button(
                     label="📥 논문 다운로드",
@@ -731,28 +749,19 @@ with tabs[2]:
         .keyword-cloud {
             display: flex;
             flex-wrap: wrap;
-            gap: 0.5rem;
+            gap: 1rem;
             margin: 1rem 0;
         }
         .keyword-item {
-            background-color: #FFD700;
-            color: black;
-            padding: 0.5rem 1rem;
-            border-radius: 20px;
-            font-size: 0.9rem;
-            cursor: pointer;
-            transition: background-color 0.3s;
-            text-decoration: none;
-            display: inline-block;
-            margin: 0.25rem;
-        }
-        .keyword-item:hover {
-            background-color: #FFE55C;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            text-align: center;
         }
         .keyword-date {
             color: #666;
             font-size: 0.8rem;
-            margin-left: 0.5rem;
+            margin-top: 0.3rem;
         }
         </style>
         """, unsafe_allow_html=True)
@@ -763,13 +772,19 @@ with tabs[2]:
             keyword = keyword_data["keyword"]
             searched_at = datetime.fromisoformat(keyword_data["searched_at"]).strftime("%Y-%m-%d %H:%M")
             
-            # Create clickable keyword button
+            # 각 키워드에 대한 상태 초기화
+            if f"show_time_{keyword_data['searched_at']}" not in st.session_state:
+                st.session_state[f"show_time_{keyword_data['searched_at']}"] = False
+            
+            # 키워드 버튼
             if st.button(
                 f"🔍 {keyword}",
-                key=f"keyword_{keyword_data['searched_at']}",
-                help=f"마지막 검색: {searched_at}"
+                key=f"keyword_{keyword_data['searched_at']}"
             ):
-                update_search_query(keyword)
-                st.experimental_rerun()
+                st.session_state[f"show_time_{keyword_data['searched_at']}"] = not st.session_state[f"show_time_{keyword_data['searched_at']}"]
+            
+            # 마지막 검색 시간 표시
+            if st.session_state[f"show_time_{keyword_data['searched_at']}"]:
+                st.caption(f"마지막 검색: {searched_at}")
         
         st.markdown('</div>', unsafe_allow_html=True)
