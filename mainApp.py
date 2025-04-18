@@ -2,12 +2,16 @@ import os
 import streamlit as st
 import random
 import time
+import uuid
 from dotenv import load_dotenv
 from openai import OpenAI
+from backend.backend_utils import search_papers_by_keywords
+from backend.openai_fakegen import generate_fake_paper
+from backend.vector_store import PaperVectorStore
 
 # Load environment variables
 load_dotenv()
-openai = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+DBPIA_API_KEY = os.getenv("DBPIA_API_KEY")
 
 # Page configuration
 st.set_page_config(
@@ -16,6 +20,18 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="collapsed"
 )
+
+# 세션 상태 초기화
+if 'search_id' not in st.session_state:
+    st.session_state.search_id = None
+if 'vector_store' not in st.session_state:
+    st.session_state.vector_store = None
+if 'current_query' not in st.session_state:
+    st.session_state.current_query = None
+
+# 오래된 벡터 저장소 정리
+vector_store = PaperVectorStore()
+vector_store.cleanup_old_stores(max_age_hours=24)  # 24시간 이상 된 저장소 삭제
 
 # Fun loading messages
 LOADING_MESSAGES = [
@@ -275,26 +291,61 @@ with tabs[0]:
     # Paper Generation
     if search_button and search_query:
         if search_type == "진짜같은 가짜 논문":
-            # Fun loading animation with random messages
+            # 새로운 검색어이거나 벡터 저장소가 없는 경우에만 논문 검색
+            if st.session_state.current_query != search_query or st.session_state.vector_store is None:
+                # Fun loading animation with random messages
+                loading_placeholder = st.empty()
+                with loading_placeholder:
+                    st.markdown(f"""
+                    <div class="loading-container">
+                        <h3>🔍 관련 논문을 검색하고 있습니다...</h3>
+                    </div>
+                    """, unsafe_allow_html=True)
+                    
+                    # 논문 검색
+                    result = search_papers_by_keywords(search_query, DBPIA_API_KEY)
+                    
+                    if result['papers']:
+                        # 새로운 검색 ID 생성
+                        search_id = str(uuid.uuid4())
+                        st.session_state.search_id = search_id
+                        
+                        # 벡터 저장소 경로 설정
+                        vector_store_path = f"vectorstore/paper_vectors_{search_id}"
+                        
+                        # 벡터 저장소 생성
+                        vector_store = PaperVectorStore()
+                        vector_store.add_papers(result['papers'])
+                        vector_store.save(vector_store_path)
+                        
+                        # 세션 상태 업데이트
+                        st.session_state.vector_store = vector_store
+                        st.session_state.current_query = search_query
+                        
+                        # 키워드 표시
+                        st.success(f"✅ 총 {len(result['papers'])}개의 관련 논문을 찾았습니다!")
+                        st.markdown(f"**추출된 키워드:** {', '.join(result['keywords'])}")
+                    else:
+                        st.error("❌ 관련 논문을 찾지 못했습니다.")
+                        loading_placeholder.empty()
+                        st.stop()
+            
+            # 논문 생성
             loading_placeholder = st.empty()
-            for i in range(5):  # Show 5 different loading messages
+            for i in range(3):  # Show 3 different loading messages
                 with loading_placeholder:
                     st.markdown(f"""
                     <div class="loading-container">
                         <h3>{random.choice(LOADING_MESSAGES)}</h3>
                     </div>
                     """, unsafe_allow_html=True)
-                    time.sleep(1)  # Show each message for 1 second
-
-            # Generate paper
-            response = openai.chat.completions.create(
-                model="gpt-4.1-nano",
-                messages=[
-                    {"role": "system", "content": "You are an academic paper generator that writes in Korean. Create a formal academic paper with proper structure including title, abstract, introduction, methodology, results, discussion, and conclusion. Make it sound professional but include some subtle humor and interesting twists."},
-                    {"role": "user", "content": f"Generate an academic paper about: {search_query}"}
-                ],
-                temperature=0.8,
-                max_tokens=2000
+                    time.sleep(1)
+            
+            # Generate paper using backend
+            fake_paper = generate_fake_paper(
+                vector_store=st.session_state.vector_store,
+                query=search_query,
+                max_tokens=2048
             )
             
             # Clear loading animation
@@ -304,17 +355,127 @@ with tabs[0]:
             journal_style = random.choice(PAPER_STYLES)
             current_date = time.strftime("%Y년 %m월 %d일")
             
+            # Display paper with sections
+            references_html = []
+            for ref in fake_paper['references'].split('\n'):
+                if ref.strip():
+                    references_html.append(f'<div style="margin-bottom: 0.8em; margin-left: 2em; text-indent: -2em; line-height: 1.6; font-size: 0.95em;">{ref}</div>')
+            references_html = '\n'.join(references_html)
+
             st.markdown(f"""
             <div class="paper-container">
                 <div class="paper-header">
                     <div class="paper-journal">{journal_style}</div>
                     <div class="paper-date">발행일: {current_date}</div>
                 </div>
-                {response.choices[0].message.content}
+                <h1 style="margin-bottom: 2rem;">{fake_paper['title']}</h1>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">초록</h2>
+                    <p style="line-height: 1.6;">{fake_paper['abstract']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">1. 서론</h2>
+                    <p style="line-height: 1.6;">{fake_paper['introduction']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">2. 이론적 배경</h2>
+                    <p style="line-height: 1.6;">{fake_paper['background']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">3. 연구 방법</h2>
+                    <p style="line-height: 1.6;">{fake_paper['method']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">4. 연구 결과</h2>
+                    <p style="line-height: 1.6;">{fake_paper['results']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">5. 결론</h2>
+                    <p style="line-height: 1.6;">{fake_paper['conclusion']}</p>
+                </div>
+                <div style="margin-bottom: 2rem;">
+                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">참고문헌</h2>
+                    <div style="font-family: 'Times New Roman', Times, serif;">
+                    {references_html}
+                    </div>
+                </div>
             </div>
             """, unsafe_allow_html=True)
+            
+            # 논문 다운로드 버튼
+            filename = f"generated_paper_{search_query[:30]}.txt"
+            with open(filename, "w", encoding="utf-8") as f:
+                f.write(f"제목: {fake_paper['title']}\n\n")
+                f.write(f"[초록]\n{fake_paper['abstract']}\n\n")
+                f.write(f"[1. 서론]\n{fake_paper['introduction']}\n\n")
+                f.write(f"[2. 이론적 배경]\n{fake_paper['background']}\n\n")
+                f.write(f"[3. 연구 방법]\n{fake_paper['method']}\n\n")
+                f.write(f"[4. 연구 결과]\n{fake_paper['results']}\n\n")
+                f.write(f"[5. 결론]\n{fake_paper['conclusion']}\n\n")
+                f.write(f"[참고문헌]\n{fake_paper['references']}\n")
+            
+            with open(filename, "r", encoding="utf-8") as f:
+                st.download_button(
+                    label="📥 논문 다운로드",
+                    data=f.read(),
+                    file_name=filename,
+                    mime="text/plain"
+                )
         else:
-            st.info("일반 논문 검색 기능은 준비 중입니다.")
+            # 실제 논문 검색
+            with st.spinner("🔍 논문을 검색하고 있습니다..."):
+                result = search_papers_by_keywords(search_query, DBPIA_API_KEY)
+                
+                if result['papers']:
+                    st.success(f"✅ 총 {len(result['papers'])}개의 관련 논문을 찾았습니다!")
+                    st.markdown(f"**검색 키워드:** {', '.join(result['keywords'])}")
+                    
+                    # 논문 목록 표시
+                    for i, paper in enumerate(result['papers'], 1):
+                        with st.container():
+                            st.markdown("""
+                            <style>
+                                .paper-item {
+                                    background-color: white;
+                                    padding: 1.5rem;
+                                    margin: 1rem 0;
+                                    border-radius: 8px;
+                                    border: 1px solid #FFD700;
+                                }
+                                .paper-title {
+                                    color: #1a1a1a;
+                                    font-size: 1.2rem;
+                                    font-weight: bold;
+                                    margin-bottom: 0.5rem;
+                                }
+                                .paper-meta {
+                                    color: #666;
+                                    font-size: 0.9rem;
+                                    margin-bottom: 1rem;
+                                }
+                                .paper-abstract {
+                                    color: #333;
+                                    font-size: 1rem;
+                                    line-height: 1.6;
+                                }
+                            </style>
+                            """, unsafe_allow_html=True)
+                            
+                            st.markdown(f"""
+                            <div class="paper-item">
+                                <div class="paper-title">📄 {i}. {paper['title']}</div>
+                                <div class="paper-meta">
+                                    상태: {'🔓 무료' if paper['is_free'] else '🔒 유료'}
+                                    {f' | <a href="{paper["preview_url"]}" target="_blank">미리보기</a>' if paper.get('preview_url') else ''}
+                                    {f' | <a href="{paper["link"]}" target="_blank">원문 보기</a>' if paper.get('link') else ''}
+                                </div>
+                                <div class="paper-abstract">
+                                    {paper['abstract'] if paper.get('abstract') else '초록이 제공되지 않습니다.'}
+                                </div>
+                            </div>
+                            """, unsafe_allow_html=True)
+                else:
+                    st.error("❌ 관련 논문을 찾지 못했습니다.")
 
 with tabs[1]:
     st.markdown("오늘의 특선 괴논문이 이곳에 표시됩니다.")
