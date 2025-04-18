@@ -8,6 +8,7 @@ from openai import OpenAI
 from backend.backend_utils import search_papers_by_keywords
 from backend.openai_fakegen import generate_fake_paper
 from backend.vector_store import PaperVectorStore
+from backend.reaction_utils import generate_reaction, get_reaction_gif
 
 # Load environment variables
 load_dotenv()
@@ -270,7 +271,7 @@ with col2:
 with col3:
     search_query = st.text_input(
         "검색어를 입력하세요",
-        placeholder="어떤 논문을 찾고 계신가요?",
+        placeholder="예시: 이어폰 줄꼬임에 대한 심리학적 분석",
         label_visibility="collapsed",
         key="search_query"
     )
@@ -355,53 +356,105 @@ with tabs[0]:
             journal_style = random.choice(PAPER_STYLES)
             current_date = time.strftime("%Y년 %m월 %d일")
             
-            # Display paper with sections
-            references_html = []
-            for ref in fake_paper['references'].split('\n'):
-                if ref.strip():
-                    references_html.append(f'<div style="margin-bottom: 0.8em; margin-left: 2em; text-indent: -2em; line-height: 1.6; font-size: 0.95em;">{ref}</div>')
-            references_html = '\n'.join(references_html)
+            # 리액션 생성 및 GIF 가져오기
+            reaction = generate_reaction(fake_paper['title'], fake_paper['abstract'])
+            gif_url = get_reaction_gif(reaction)
 
+            # 논문 제목과 헤더
             st.markdown(f"""
             <div class="paper-container">
                 <div class="paper-header">
                     <div class="paper-journal">{journal_style}</div>
                     <div class="paper-date">발행일: {current_date}</div>
                 </div>
-                <h1 style="margin-bottom: 2rem;">{fake_paper['title']}</h1>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">초록</h2>
-                    <p style="line-height: 1.6;">{fake_paper['abstract']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">1. 서론</h2>
-                    <p style="line-height: 1.6;">{fake_paper['introduction']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">2. 이론적 배경</h2>
-                    <p style="line-height: 1.6;">{fake_paper['background']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">3. 연구 방법</h2>
-                    <p style="line-height: 1.6;">{fake_paper['method']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">4. 연구 결과</h2>
-                    <p style="line-height: 1.6;">{fake_paper['results']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">5. 결론</h2>
-                    <p style="line-height: 1.6;">{fake_paper['conclusion']}</p>
-                </div>
-                <div style="margin-bottom: 2rem;">
-                    <h2 style="font-size: 1.5rem; margin-bottom: 1rem;">참고문헌</h2>
-                    <div style="font-family: 'Times New Roman', Times, serif;">
-                    {references_html}
-                    </div>
-                </div>
             </div>
             """, unsafe_allow_html=True)
+
+            # 논문 제목
+            st.markdown(f"# {fake_paper['title']}")
             
+            # 초록
+            st.markdown("## 초록")
+            st.markdown(fake_paper['abstract'])
+            
+            # 서론
+            st.markdown("## 1. 서론")
+            st.markdown(fake_paper['introduction'])
+            
+            # 이론적 배경
+            st.markdown("## 2. 이론적 배경")
+            st.markdown(fake_paper['background'])
+            
+            # 연구 방법
+            st.markdown("## 3. 연구 방법")
+            st.markdown(fake_paper['method'])
+            
+            # 연구 결과
+            st.markdown("## 4. 연구 결과")
+            st.markdown(fake_paper['results'])
+            
+            # 결론
+            st.markdown("## 5. 결론")
+            st.markdown(fake_paper['conclusion'])
+            
+            # 참고문헌
+            st.markdown("## 참고문헌")
+            references = fake_paper['references'].split('\n')
+            for ref in references:
+                if ref.strip():
+                    st.markdown(f"- {ref}")
+
+            # 스타일 적용
+            st.markdown("""
+            <style>
+                .paper-container {
+                    background-color: white;
+                    padding: 2rem;
+                    margin-bottom: 2rem;
+                    border-radius: 8px;
+                }
+                .paper-header {
+                    text-align: center;
+                    margin-bottom: 2rem;
+                }
+                .paper-journal {
+                    font-size: 1.2rem;
+                    color: #666;
+                    margin-bottom: 0.5rem;
+                }
+                .paper-date {
+                    color: #888;
+                }
+                h1 {
+                    font-size: 2rem;
+                    margin-bottom: 2rem;
+                    text-align: center;
+                }
+                h2 {
+                    font-size: 1.5rem;
+                    margin: 2rem 0 1rem 0;
+                    color: #333;
+                }
+                p {
+                    line-height: 1.6;
+                    color: #444;
+                    margin-bottom: 1rem;
+                }
+            </style>
+            """, unsafe_allow_html=True)
+
+            # 리액션 섹션 (논문 내용 아래에 표시)
+            st.markdown("""
+            <div style='background-color: #f8f8f8; padding: 2rem; border-radius: 8px; margin: 2rem 0; text-align: center; border: 1px solid #FFD700;'>
+                <h3 style='margin-bottom: 1rem; color: #333;'>🤖 AI의 리액션</h3>
+                <p style='font-size: 1.2rem; margin-bottom: 1.5rem; color: #666;'>{}</p>
+                {}
+            </div>
+            """.format(
+                reaction,
+                f'<img src="{gif_url}" style="max-width: 300px; border-radius: 8px; margin: 0 auto; display: block;" alt="Reaction GIF">' if gif_url else ''
+            ), unsafe_allow_html=True)
+
             # 논문 다운로드 버튼
             filename = f"generated_paper_{search_query[:30]}.txt"
             with open(filename, "w", encoding="utf-8") as f:
@@ -431,49 +484,60 @@ with tabs[0]:
                     st.markdown(f"**검색 키워드:** {', '.join(result['keywords'])}")
                     
                     # 논문 목록 표시
+                    st.markdown("""
+                    <style>
+                        .paper-item {
+                            background-color: white;
+                            padding: 1.5rem;
+                            margin: 1rem 0;
+                            border-radius: 8px;
+                            border: 1px solid #FFD700;
+                        }
+                        .paper-title {
+                            color: #1a1a1a;
+                            font-size: 1.2rem;
+                            font-weight: bold;
+                            margin-bottom: 0.8rem;
+                        }
+                        .paper-meta {
+                            color: #666;
+                            font-size: 0.9rem;
+                            margin-bottom: 1rem;
+                        }
+                        .paper-abstract {
+                            color: #333;
+                            font-size: 1rem;
+                            line-height: 1.6;
+                        }
+                        .paper-link {
+                            color: #1E88E5;
+                            text-decoration: none;
+                            margin-left: 0.5rem;
+                        }
+                        .paper-link:hover {
+                            text-decoration: underline;
+                        }
+                    </style>
+                    """, unsafe_allow_html=True)
+                    
                     for i, paper in enumerate(result['papers'], 1):
-                        with st.container():
-                            st.markdown("""
-                            <style>
-                                .paper-item {
-                                    background-color: white;
-                                    padding: 1.5rem;
-                                    margin: 1rem 0;
-                                    border-radius: 8px;
-                                    border: 1px solid #FFD700;
-                                }
-                                .paper-title {
-                                    color: #1a1a1a;
-                                    font-size: 1.2rem;
-                                    font-weight: bold;
-                                    margin-bottom: 0.5rem;
-                                }
-                                .paper-meta {
-                                    color: #666;
-                                    font-size: 0.9rem;
-                                    margin-bottom: 1rem;
-                                }
-                                .paper-abstract {
-                                    color: #333;
-                                    font-size: 1rem;
-                                    line-height: 1.6;
-                                }
-                            </style>
-                            """, unsafe_allow_html=True)
-                            
-                            st.markdown(f"""
-                            <div class="paper-item">
-                                <div class="paper-title">📄 {i}. {paper['title']}</div>
-                                <div class="paper-meta">
-                                    상태: {'🔓 무료' if paper['is_free'] else '🔒 유료'}
-                                    {f' | <a href="{paper["preview_url"]}" target="_blank">미리보기</a>' if paper.get('preview_url') else ''}
-                                    {f' | <a href="{paper["link"]}" target="_blank">원문 보기</a>' if paper.get('link') else ''}
-                                </div>
-                                <div class="paper-abstract">
-                                    {paper['abstract'] if paper.get('abstract') else '초록이 제공되지 않습니다.'}
-                                </div>
+                        # 메타 정보 구성
+                        meta_parts = []
+                        meta_parts.append('🔓 무료' if paper['is_free'] else '🔒 유료')
+                        if paper.get('preview_url'):
+                            meta_parts.append(f'<a href="{paper["preview_url"]}" target="_blank" class="paper-link">미리보기</a>')
+                        if paper.get('link'):
+                            meta_parts.append(f'<a href="{paper["link"]}" target="_blank" class="paper-link">원문 보기</a>')
+                        
+                        st.markdown(f"""
+                        <div class="paper-item">
+                            <div class="paper-title">📄 {i}. {paper['title']}</div>
+                            <div class="paper-meta">{' | '.join(meta_parts)}</div>
+                            <div class="paper-abstract">
+                                {paper.get('abstract', '초록이 제공되지 않습니다.')}
                             </div>
-                            """, unsafe_allow_html=True)
+                        </div>
+                        """, unsafe_allow_html=True)
                 else:
                     st.error("❌ 관련 논문을 찾지 못했습니다.")
 
